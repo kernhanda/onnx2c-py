@@ -1,5 +1,4 @@
 import logging
-from mimetypes import init
 import onnx
 
 
