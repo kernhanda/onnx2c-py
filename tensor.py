@@ -1,5 +1,6 @@
 import numpy as np
 import onnx
+import onnx.mapping
 import onnx.numpy_helper as nph
 from typing import Any
 
@@ -71,8 +72,54 @@ class Tensor:
             np.int32: "int32_t",
             np.uint32: "uint32_t",
             np.int64: "int64_t",
-            np.uint64: "uint64_t"
+            np.uint64: "uint64_t",
+            np.dtype('float16'): "bfloat_t",  # native numpy does not support bfloat16
         }[self.data.dtype]
+
+    @property
+    def str_dimensions(self):
+        return ' '.join(map(str, self.data.shape))
+
+    @property
+    def is_high_precision_numeric(self) -> bool:
+        return self.data.dtype in [
+            np.uint32,
+            np.uint64,
+            np.int32,
+            np.int64,
+            np.float16,
+            np.float32,
+            np.float64
+        ]
+
+    @property
+    def is_all_fp(self) -> bool:
+        ...
+
+    @property
+    def is_non_bfloat(self) -> bool:
+        ...
+
+    @property
+    def is_int64(self)->bool:
+        ...
+
+    @property
+    def is_8bit(self)->bool:
+        ...
+
+    @property
+    def is_any_int(self)->bool:
+        ...
+
+    @property
+    def is_unsigned_int(self)->bool:
+        ...
+
+    @property
+    def is_signed_int(self)->bool:
+        ...
+
 
 
 def parse_onnx_tensor(t: onnx.TensorProto):
@@ -105,3 +152,24 @@ def parse_onnx_tensor(t: onnx.TensorProto):
         name=name,
         doc=doc
     )
+
+
+def parse_onnx_value_info(vi: onnx.ValueInfoProto) -> Tensor:
+    if not vi.type.tensor_type:
+        raise ValueError("Cannot handle non-tensor value info")
+
+    tt = vi.type.tensor_type
+    shape: onnx.TensorShapeProto = tt.shape
+
+    array_type = onnx.mapping.TENSOR_TYPE_TO_NP_TYPE[tt.elem_type]
+    array_shape = [d.dim_value for d in shape.dim]
+
+    initialize = False
+    generate = False
+    isIO = True
+    isConst = False
+    name = vi.name
+    doc = vi.doc_string
+    data = np.ndarray(shape=array_shape, dtype=array_type)
+
+    return Tensor(name=name, doc=doc, data=data, generate=generate, initialize=initialize, isIO=isIO, isConst=isConst)
