@@ -2,13 +2,12 @@ import numpy as np
 import onnx
 import onnx.mapping
 import onnx.numpy_helper as nph
-from typing import Any
+from typing import Any, TextIO
 
 import utils
 
 
 class Tensor:
-
     def __init__(
         self,
         name: str = "",
@@ -63,6 +62,7 @@ class Tensor:
     @property
     def data_type_str(self):
         return {
+            np.bool: "bool",
             np.float32: "float",
             np.double: "double",
             np.int8: "int8_t",
@@ -73,7 +73,6 @@ class Tensor:
             np.uint32: "uint32_t",
             np.int64: "int64_t",
             np.uint64: "uint64_t",
-            np.dtype('float16'): "bfloat_t",  # native numpy does not support bfloat16
         }[self.data.dtype]
 
     @property
@@ -82,60 +81,147 @@ class Tensor:
 
     @property
     def is_high_precision_numeric(self) -> bool:
-        return self.data.dtype in [
-            np.uint32,
-            np.uint64,
-            np.int32,
-            np.int64,
-            np.float16,
-            np.float32,
-            np.float64
-        ]
+        # TODO: support fp16
+        # TODO: Support bfloat16
+        return self.data.dtype in [np.uint32, np.uint64, np.int32, np.int64, np.float16, np.float32, np.float64]
 
     @property
     def is_all_fp(self) -> bool:
-        ...
+        # TODO: support fp16
+        return self.data.dtype in [np.float32, np.float64]
 
     @property
     def is_non_bfloat(self) -> bool:
-        ...
+        # TODO: Support bfloat16
+        return True
 
     @property
-    def is_int64(self)->bool:
-        ...
+    def is_int64(self) -> bool:
+        return self.data.dtype == np.int64
 
     @property
-    def is_8bit(self)->bool:
-        ...
+    def is_8bit(self) -> bool:
+        return self.data.dtype in [np.int8, np.uint8]
 
     @property
-    def is_any_int(self)->bool:
-        ...
+    def is_any_int(self) -> bool:
+        return self.is_unsigned_int() or self.is_signed_int()
 
     @property
-    def is_unsigned_int(self)->bool:
-        ...
+    def is_unsigned_int(self) -> bool:
+        return self.data.dtype in [
+            np.uint8,
+            np.uint16,
+            np.uint32,
+            np.uint64,
+        ]
 
     @property
-    def is_signed_int(self)->bool:
-        ...
+    def is_signed_int(self) -> bool:
+        return self.data.dtype in [
+            np.int8,
+            np.int16,
+            np.int32,
+            np.int64,
+        ]
 
+    def print_element(self, destination: IO, element: int):
+        destination.write(str(self.data[element]).encode('utf-8'))
+        if self.is_all_fp():
+            destination.write(b"f")
+
+    def print_tensor_initializer(self, destination: IO):
+        self._print_tensor_initializer(destination, dim=0, offs=0)
+
+    def _print_tensor_initializer(self, destination: TextIO, dim: int = 0, offs: int = 0):
+        """
+            Print the tensor initialization values.
+            dim: the dimension from which to print.
+            offs: the offset into this dimension from where to print.
+            This function recurses back into itself to print all more inner dimenstions there are.
+            I.e. if calling with dim=0, offs=0 (which are default values),
+            it prints the entire variable initialzation.
+        """
+        if self.data.shape[dim] == 0:
+            return
+
+        destination.write("  " * dim)
+        destination.write("{")
+
+        if dim < (len(self.data.shape) - 1):
+            destination.write("\n")
+
+            for i in range(self.data.shape[dim]):
+                remaining_dims = 1
+
+                for j in self.data.shape[dim + 1:]:
+                    remaining_dims *= j
+
+                self.print_tensor_initializer(destination, dim + 1, offs + i * remaining_dims)
+
+                if i < (self.data.shape[dim] - 1):
+                    destination.write(",")
+
+                destination.write("\n")
+
+            destination.write("  " * dim)
+
+        else:
+            for i in range(self.data.shape[dim]):
+                element = offs + i
+
+                # TODO: It might be preferable to inline this function
+                self.print_element(destination, element)
+
+                if i < (self.data.shape[dim] - 1):
+                    destination.write(", ")
+
+        destination.write("}")
+
+    def print_tensor(self, destination: TextIO = None, alternate_name="", callsite=False, const=False):
+        res: str = ""
+
+        if not callsite:
+            if self.isConst or const:
+                res += "const "
+
+            res += self.data_type_str() + " "
+
+        res += alternate_name or self.cname
+
+        if not callsite:
+            res += ''.join([f"[{i}]" for i in self.data.shape])
+
+        if destination:
+            destination.write(res)
+        else:
+            return res
+
+    def print_tensor_callsite(self) -> str:
+        return self.print_tensor(alternate_name="", callsite=True, const=False)
+
+    def print_tensor_as_const(self, destination: TextIO = None, alternate_name: str = "", callsite=False) -> str:
+        return self.print_tensor(destination=destination, alternate_name=alternate_name, callsite=callsite, const=True)
 
 
 def parse_onnx_tensor(t: onnx.TensorProto):
     T = onnx.TensorProto
 
+    if t.data_location != T.DataLocation.DEFAULT:
+        raise RuntimeError(f"unhandled: non-default data location in tensor {t.name}")
+    if t.segment:
+        raise RuntimeError(f"unhandled: segmented data in tensor {t.name}")
+    if t.data_type == T.UNDEFINED:
+        raise RuntimeError(f"unknown data type in tensor {t.name}")
+    if t.data_type == T.BFLOAT16:
+        raise RuntimeError(f"unhandled: bfloat16 data type in tensor {t.name}")
+    if t.data_type == T.FLOAT16:
+        raise RuntimeError(f"unhandled: bfloat16 data type in tensor {t.name}")
+
     generate = True
     initialize = True
     isIO = False
     isConst = True
-
-    if t.data_location != T.DataLocation.DEFAULT:
-        raise RuntimeError(f"unhandled: non-default data location in t {t.name}")
-    if t.segment:
-        raise RuntimeError(f"unhandled: segmented data in t {t.name}")
-    if t.data_type == T.UNDEFINED:
-        raise RuntimeError(f"unknown data type in t {t.name}")
 
     data = nph.to_array(t)
     raw_data = t.raw_data
@@ -158,8 +244,14 @@ def parse_onnx_value_info(vi: onnx.ValueInfoProto) -> Tensor:
     if not vi.type.tensor_type:
         raise ValueError("Cannot handle non-tensor value info")
 
+    T = onnx.TensorProto
     tt = vi.type.tensor_type
     shape: onnx.TensorShapeProto = tt.shape
+
+    if tt.elem_type == T.BFLOAT16:
+        raise RuntimeError(f"unhandled: bfloat16 data type in tensor {vi.name}")
+    if tt.elem_type == T.FLOAT16:
+        raise RuntimeError(f"unhandled: bfloat16 data type in tensor {vi.name}")
 
     array_type = onnx.mapping.TENSOR_TYPE_TO_NP_TYPE[tt.elem_type]
     array_shape = [d.dim_value for d in shape.dim]
