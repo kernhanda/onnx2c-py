@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
+from multiprocessing import Pool
+import numpy as np
 from typing import TextIO, List, Tuple
 
 import onnx
 
-import nodes
 import tensor
 import utils
 
@@ -112,8 +113,148 @@ class Node(ABC):
         self._output_params.append((t, name))
 
 
+class Elementwise_2(Node):
+    def __init__(
+        self,
+        onnx_node: onnx.NodeProto = None,
+        is_resolved: bool = False,
+        op_name: str = None,
+        onnx_name: str = None
+    ) -> None:
+        super().__init__(onnx_node, is_resolved, op_name, onnx_name)
+
+
+class SpatialFilter(Node):
+    ...
+
+
+class Pooling(SpatialFilter):
+    ...
+
+
+class MaxPool(Pooling):
+    ...
+
+
+class AveragePool(Pooling):
+    ...
+
+
+class GlobalAveragePool(Pooling):
+    ...
+
+
+class MatMul(Node):
+    ...
+
+
+class Slice(Node):
+    ...
+
+
+class Conv(SpatialFilter):
+    ...
+
+
+class BatchNormalization(Node):
+    ...
+
+
+class Concat(Node):
+    ...
+
+
+class Constant(Node):
+    ...
+
+
+class Reshape(Node):
+    def __init__(
+        self,
+        onnx_node: onnx.NodeProto = None,
+        is_resolved: bool = False,
+        op_name: str = None,
+        onnx_name: str = None
+    ) -> None:
+        super().__init__(onnx_node, is_resolved, op_name, onnx_name)
+
+        self.data: tensor.Tensor = None
+        self.shape: tensor.Tensor = None
+        self.reshaped: tensor.Tensor = None
+
+    def print(self, destination: TextIO):
+        dtype = self.data.data_type_str
+
+        # From onnx2c
+        # TODO: is there ANY case where a reshape needs to re-order the internal data layout ?
+
+
+# TODO: and if not - check that at least gcc can get rid of this copy! (So onnx2c doesn't need to)
+# TODO: or - can we mark output an onnx2c-alias of input?
+
+
+class Relu(Node):
+    def __init__(
+        self,
+        onnx_node: onnx.NodeProto = None,
+        is_resolved: bool = False,
+        op_name: str = None,
+        onnx_name: str = None
+    ) -> None:
+        super().__init__(onnx_node, is_resolved, op_name, onnx_name)
+
+        self.X: tensor.Tensor = None
+        self.Y: tensor.Tensor = None
+
+    def print(self, destination: TextIO):
+        X = self.X
+        Y = self.Y
+        dtype = X.data_type_str
+
+        destination.write(
+            "\t/*Relu*/\n"
+            f"\t{dtype} *X = ({dtype}*){X.cname};\n"
+            f"\t{dtype} *Y = ({dtype}*){Y.cname};\n"
+            f"\tfor(uint32_t i = 0; i < {X.data_num_elem}; ++i)\n"
+            "\t\tY[i] = X[i] > 0 ? X[i] : 0;\n\n"
+        )
+
+    def resolve_node(self, inputs: List[tensor.Tensor]) -> List[tensor.Tensor]:
+        X = inputs[0]
+
+        if not (X.is_all_fp or X.is_signed_int):
+            raise ValueError("Incorrect input for Relu")
+
+        if X.data.shape[1] != 0 and not (X.data.shape[0] != 1 or X.data.shape[1] != 1):
+            raise ValueError("Unsupported: multidim relu")
+
+        Y = tensor.Tensor(data=np.ndarray(shape=X.data.shape, dtype=X.data.dtype))
+
+        self.X = X
+        self.Y = Y
+        self._register_input(self.X, "X")
+        self._register_output(self.Y, "Y")
+
+        return [Y]
+
+
 def from_onnx_node(onnx_node: onnx.NodeProto) -> Node:
-    n = Node()
+    mapping = {
+        'Add': Elementwise_2,
+        'AveragePool': AveragePool,
+        'BatchNormalization': BatchNormalization,
+        'Concat': Concat,
+        'Constant': Constant,
+        'Conv': Conv,
+        'GlobalAveragePool': GlobalAveragePool,
+        'MatMul': MatMul,
+        'MaxPool': MaxPool,
+        'Relu': Relu,
+        'Reshape': Reshape,
+        'Slice': Slice,
+    }
+
+    n = mapping[onnx_node.op_type](onnx_node)
 
     if onnx_node.attribute:
         n.parse_attributes()
