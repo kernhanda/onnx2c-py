@@ -80,7 +80,7 @@ class Node(ABC):
         # If it has a name, it's used
         return self.onnx_node.output[index] != ""
 
-    def parse_attributes(self, onnx_node: onnx.NodeProto):
+    def parse_attributes(self):
         raise ValueError(f"Attribute parsing not implemented for node operation type {self.op_name}")
 
     @property
@@ -113,4 +113,9 @@ class Node(ABC):
 
 
 def from_onnx_node(onnx_node: onnx.NodeProto) -> Node:
-    return Node()
+    n = Node()
+
+    if onnx_node.attribute:
+        n.parse_attributes()
+
+    return n
