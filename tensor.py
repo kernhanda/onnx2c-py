@@ -125,6 +125,10 @@ class Tensor:
             np.int64,
         ]
 
+    @property
+    def is_used(self) -> bool:
+        return bool(self.name)
+
     def print_element(self, destination: IO, element: int):
         destination.write(str(self.data[element]).encode('utf-8'))
         if self.is_all_fp():

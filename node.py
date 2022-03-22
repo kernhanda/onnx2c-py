@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import IO, List, Tuple
+from typing import TextIO, List, Tuple
 
 import onnx
 
@@ -13,7 +13,6 @@ FuncParam = Tuple[tensor.Tensor, str]
 
 
 class Node(ABC):
-
     def __init__(
         self,
         onnx_node: onnx.NodeProto = None,
@@ -39,20 +38,31 @@ class Node(ABC):
             self.parse_atstributes(self.onnx_node)
 
     def parse_attributes(self, onnx_node: onnx.NodeProto):
-        ...
+        raise RuntimeError(f"Attribute parsing not implemented for node operation type {onnx_node.op_type}")
 
     @abstractmethod
-    def print(self, destination: IO):
+    def print(self, destination: TextIO):
         ...
 
-    def print_func_params(self, destination: IO, decorate: bool):
-        ...
+    def print_func_params(self, destination: TextIO, decorate: bool):
+        params: List[str] = []
 
-    def print_func_params_shapes(self, destination: IO):
-        ...
+        if decorate:
+            params += [t.print_tensor_as_const(alternate_name=name) for t, name in self._input_params]
 
-    def print_func_params_callsite(self, destination: IO):
-        ...
+            params += [t.print_tensor(alternate_name=name) for t, name in self._output_params if t.is_used]
+        else:
+            params += [t.print_tensor_callsite() for t, _ in self._input_params]
+
+            params += [t.print_tensor_callsite() for t, _ in self._output_params if t.is_used]
+
+        destination.write(", ".join(params))
+
+    def print_func_params_shapes(self, destination: TextIO):
+        self.print_func_params(destination=destination, decorate=True)
+
+    def print_func_params_callsite(self, destination: TextIO):
+        self.print_func_params(destination=destination, decorate=False)
 
     @abstractmethod
     def resolve_node(self, inputs: List[tensor.Tensor]) -> List[tensor.Tensor]:
@@ -78,13 +88,28 @@ class Node(ABC):
         return "node_" + utils.cify_name(self.onnx_name)
 
     def multidirectional_broadcast_size(self, A: List[int], B: List[int]) -> List[int]:
-        ...
+        diff_len = len(A) - len(B)
+        if diff_len > 0:
+            B = [1] * diff_len + B
+        elif diff_len < 0:
+            A = [1] * (diff_len * -1) + A
+
+        res = []
+        for a, b in zip(A, B):
+            if a == 1 or b == 1:
+                res.append(max(a, b))
+            elif a == b:
+                res.append(a)
+            else:
+                raise RuntimeError(f"multidirectional_broadcast: bad tensor shapes for node {self.onnx_name}")
+
+        return res
 
     def _register_input(self, t: tensor.Tensor, name: str):
-        ...
+        self._input_params.append((t, name))
 
     def _register_output(self, t: tensor.Tensor, name: str):
-        ...
+        self._output_params.append((t, name))
 
 
 def from_onnx_node(onnx_node: onnx.NodeProto) -> Node:
