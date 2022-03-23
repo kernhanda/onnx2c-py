@@ -130,6 +130,7 @@ class Graph:
 
     def process_graph(self):
         onnx_graph: onnx.GraphProto = self.onnx_model.graph
+        node.Node.onnx_ir_version = self.onnx_ir_version
 
         # This might not be needed
         if self.ext_inputs:
