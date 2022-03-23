@@ -2,7 +2,7 @@ import numpy as np
 import onnx
 import onnx.mapping
 import onnx.numpy_helper as nph
-from typing import Any, TextIO
+from typing import Any, TextIO, List
 
 import utils
 
@@ -48,16 +48,20 @@ class Tensor:
         return utils.cify_name(self.name)
 
     @property
-    def data_elem_size(self):
+    def data_elem_size(self) -> int:
         return self.data.itemsize
 
     @property
-    def data_num_elem(self):
+    def data_num_elem(self) -> int:
         return self.data.size
 
     @property
     def rank(self):
         return len(self.data.shape)
+
+    @property
+    def shape(self) -> List[int]:
+        return self.data.shape
 
     @property
     def data_type_str(self):
@@ -129,12 +133,12 @@ class Tensor:
     def is_used(self) -> bool:
         return bool(self.name)
 
-    def print_element(self, destination: IO, element: int):
-        destination.write(str(self.data[element]).encode('utf-8'))
+    def print_element(self, destination: TextIO, element: int):
+        destination.write(str(self.data[element]))
         if self.is_all_fp():
-            destination.write(b"f")
+            destination.write("f")
 
-    def print_tensor_initializer(self, destination: IO):
+    def print_tensor_initializer(self, destination: TextIO):
         self._print_tensor_initializer(destination, dim=0, offs=0)
 
     def _print_tensor_initializer(self, destination: TextIO, dim: int = 0, offs: int = 0):
