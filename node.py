@@ -1644,6 +1644,158 @@ class Relu(Node):
         return [Y]
 
 
+class Gemm(Node):
+    def __init__(
+        self,
+        onnx_node: onnx.NodeProto = None,
+        is_resolved: bool = False,
+        op_name: str = None,
+        onnx_name: str = None
+    ) -> None:
+        super().__init__(onnx_node, is_resolved, op_name, onnx_name)
+
+        self.A: tensor.Tensor = None
+        self.B: tensor.Tensor = None
+        self.C: tensor.Tensor = None
+        self.Y: tensor.Tensor = None
+
+        self.alpha = 1.
+        self.beta = 1.
+        self.transA = 0
+        self.transB = 0
+
+    def parse_attributes(self):
+        for a in self.onnx_node.attribute:
+            logging.debug(f"Parsing attribute {a.name}")
+
+            if a.name == "alpha":
+                self.alpha = utils.parse_attribute_float(a)
+            elif a.name == "beta":
+                self.beta = utils.parse_attribute_float(a)
+            elif a.name == "transA":
+                self.transA = utils.parse_attribute_int(a)
+            elif a.name == "transB":
+                self.transB = utils.parse_attribute_int(a)
+            else:
+                raise ValueError(f"unknown attribute: {a.name}")
+
+    def print(self, destination: TextIO):
+        A = self.A
+        B = self.B
+        C = self.C
+        Y = self.Y
+        transA = self.transA
+        transB = self.transB
+        alpha = self.alpha
+        beta = self.beta
+
+        A1 = A.shape[1]
+        C0 = 0
+        C1 = 0
+        if C:
+            C0 = C.shape[0]
+            if C.rank > 1:
+                C1 = C.shape[1]
+
+        M = A.shape[1] if transA else A.shape[0]    # row
+        K = A.shape[0] if transA else A.shape[1]    # inner
+        N = B.shape[0] if transB else B.shape[1]    # column
+        dtype = A.data_type_str
+
+        destination.write(
+            f"\t/* Gemm */\n"
+            f"\t/* alpha  = {alpha}\n"
+            f"\t * beta   = {beta}\n"
+            f"\t * transA = {transA}\n"
+            f"\t * transB = {transB}\n"
+            f"\t */\n"
+            f"\tconst int M = {M};\n"
+            f"\tconst int K = {K};\n"
+            f"\tconst int N = {N};\n"
+            f"\tfloat alpha = {alpha};\n"
+            f"\tfloat beta = {beta};\n"
+            f"\t{dtype} (*A)[{A1}] = ({dtype}(*)[{A1}]){A.cname};"
+            f"\t{dtype} (*Y)[{N}] = ({dtype}(*)[{N}]){Y.cname};"
+        )
+
+        A_el = "A[i][r]" if transA else "A[r][i]"
+        B_idx = "[c][i]" if transB else "[i][c]"
+
+        # Cast optional C matrix to generated variable
+        # "C[M][N]"
+        if C:
+            C_idx = ""
+            if C.rank == 0:
+                raise ValueError("Unimplemented: scalar C in Gemm")
+            elif C.rank == 1:
+                dim = C.shape[0]
+                if dim == M:
+                    C0 = M
+                    C1 = 1
+                elif dim == N:
+                    C0 = 1
+                    C1 = N
+                elif dim == 1:
+                    C0 = 1
+                    C1 = 1
+                else:
+                    raise ValueError("C dimension mismatch in Gemm")
+            elif C.rank == 2:
+                C0, C1 = C.shape
+            else:
+                raise ValueError("C has too many dimensions in Gemm")
+
+            C_idx += "[0]" if C0 <= 1 else "[r]"
+            C_idx += "[0]" if C1 <= 1 else "[c]"
+
+            destination.write(f"\t{dtype} (*C)[{C1}] = ({dtype}(*)[{C1}]){C.cname};\n")
+
+        # Now generate the calculation source code
+
+        # Loop output rows, columns
+        destination.write(
+            "\tfor (uint32_t r = 0; r < M; ++r) {\n"
+            "\t\tfor (uint32_t c = 0; c < N; ++c) {\n"
+
+        # Calculate the matrix multiplcation inner dot product
+            f"\t\t\t{dtype} ABrc = 0;\n"
+            "\t\t\tfor (uint32_t i = 0; i < K; ++i) {\n"
+            f"\t\t\t\t{B.data_type_str} B = {B.cname}{B_idx};\n"
+            f"\t\t\t\tABrc += {A_el} * B;\n"
+            "\t\t\t}"
+
+        # Add scale & bias, store result in output
+            f"\t\t\t{dtype} tmp = ABrc * alpha;\n"
+        )
+
+        if C:
+            destination.write(f"\t\t\ttmp += C{C_idx} * beta;\n")
+
+        destination.write("\t\t\tY[r][c] = tmp;\n\t}\n")
+
+    def resolve_node(self, inputs: List[tensor.Tensor]) -> List[tensor.Tensor]:
+        if len(inputs) < 2:
+            raise ValueError("Not enough inputs")
+
+        self.A, self.B = inputs[:2]
+
+        if len(inputs) == 3:
+            self.C = inputs[2]
+
+        M = self.A.shape[1] if self.transA else self.A.shape[0]
+        N = self.B.shape[0] if self.transB else self.B.shape[1]
+
+        self.Y = tensor.Tensor(data=np.ndarray(shape=(M, N), dtype=self.A.data.dtype))
+
+        self._register_input(self.A, "A")
+        self._register_input(self.B, "B")
+        if self.C:
+            self._register_input(self.C, "C")
+        self._register_output(self.Y, "Y")
+
+        return [self.Y]
+
+
 def from_onnx_node(onnx_node: onnx.NodeProto) -> Node:
     mapping = {
         "Add": Elementwise_2,
@@ -1656,7 +1808,7 @@ def from_onnx_node(onnx_node: onnx.NodeProto) -> Node:
         "Conv": Conv,
         "Div": Elementwise_2,
         "Equal": Elementwise_2,
-        "Gemm": ...,
+        "Gemm": Gemm,
         "GlobalAveragePool": GlobalAveragePool,
         "Greater": Elementwise_2,
         "GreaterOrEqual": Elementwise_2,

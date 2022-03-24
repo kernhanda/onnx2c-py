@@ -135,7 +135,7 @@ class Tensor:
 
     def print_element(self, destination: TextIO, element: int):
         destination.write(str(self.data[element]))
-        if self.is_all_fp():
+        if self.is_all_fp:
             destination.write("f")
 
     def print_tensor_initializer(self, destination: TextIO):
@@ -165,7 +165,7 @@ class Tensor:
                 for j in self.data.shape[dim + 1:]:
                     remaining_dims *= j
 
-                self.print_tensor_initializer(destination, dim + 1, offs + i * remaining_dims)
+                self._print_tensor_initializer(destination, dim + 1, offs + i * remaining_dims)
 
                 if i < (self.data.shape[dim] - 1):
                     destination.write(",")
@@ -193,7 +193,7 @@ class Tensor:
             if self.isConst or const:
                 res += "const "
 
-            res += self.data_type_str() + " "
+            res += self.data_type_str + " "
 
         res += alternate_name or self.cname
 
