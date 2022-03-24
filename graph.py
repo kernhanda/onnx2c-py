@@ -15,6 +15,8 @@ class Graph:
         self.tensors: List[tensor.Tensor] = []
         self.nodes: List[node.Node] = []
 
+        self.process_graph()
+
     def print_header(self, destination: TextIO):
         self.print_file_frontmatter(destination)
 
@@ -176,10 +178,13 @@ class Graph:
 
         while num_resolved < num_unresolved:
 
-            for idx, node in enumerate(nodes[:]):
+            # for idx, node in enumerate(nodes[:]):
 
-                if self.try_resolve_node(node):
-                    nodes.pop(idx)
+            #     # BUG: store indices and pop them after
+            #     if self.try_resolve_node(node):
+            #         nodes.pop(idx)
+
+            nodes = list(filter(lambda n: not self.try_resolve_node(n), nodes))
 
             num_resolved = num_unresolved - len(nodes)
 
@@ -196,14 +201,14 @@ class Graph:
         logging.info(f"Resolving node {onnx_node.name}")
 
         for n in self.nodes:
-            if onnx_node.name == n.name:
+            if onnx_node.name == n.onnx_name:
                 return True
 
         inputs = self.get_node_input_tensors(onnx_node)
         if inputs is None:
             return False
 
-        n: node.Node = node.create_node(onnx_node)
+        n: node.Node = node.from_onnx_node(onnx_node)
 
         outputs = n.resolve_node(inputs)
 

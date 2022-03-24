@@ -27,6 +27,11 @@ def main():
     args = parse_args()
     logging.basicConfig(level=LOG_LEVELS[args["verbosity"]], filename=args["log"], filemode='w')
 
+    g = graph.Graph(onnx.load(args["input"]))
+
+    with open(args["output"], mode="wt") as f:
+        g.print_source(f)
+
 
 if __name__ == "__main__":
     main()

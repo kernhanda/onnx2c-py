@@ -40,12 +40,9 @@ class Node(ABC):
             self.onnx_name = f"anonymous_{self.op_name}_{_anonymous_node_counter}"
             _anonymous_node_counter += 1
 
-        if self.onnx_node:
-            self.parse_attributes(self.onnx_node)
-
-    def parse_attributes(self, onnx_node: onnx.NodeProto):
-        if onnx_node.attribute:
-            raise RuntimeError(f"Attribute parsing not implemented for node operation type {onnx_node.op_type}")
+    def parse_attributes(self):
+        if self.onnx_node.attribute:
+            raise RuntimeError(f"Attribute parsing not implemented for node operation type {self.onnx_node.op_type}")
 
     @abstractmethod
     def print(self, destination: TextIO):
@@ -87,9 +84,6 @@ class Node(ABC):
         # If it has a name, it's used
         return self.onnx_node.output[index] != ""
 
-    def parse_attributes(self):
-        raise ValueError(f"Attribute parsing not implemented for node operation type {self.op_name}")
-
     @property
     def c_name(self):
         return "node_" + utils.cify_name(self.onnx_name)
@@ -97,9 +91,9 @@ class Node(ABC):
     def multidirectional_broadcast_size(self, A: List[int], B: List[int]) -> List[int]:
         diff_len = len(A) - len(B)
         if diff_len > 0:
-            B = [1] * diff_len + B
+            B = [1] * diff_len + list(B)
         elif diff_len < 0:
-            A = [1] * (diff_len * -1) + A
+            A = [1] * (diff_len * -1) + list(A)
 
         res = []
         for a, b in zip(A, B):
@@ -342,7 +336,7 @@ class SpatialFilter(Node):
         # kernel: the (number of) weights of the filter
         # filter: the spatial placement of the kernel weights
         # NB: 'dilation==1' is what is used for "no spacing in the filter"
-        filter_size = map(lambda k, d: k + (k - 1) * (d - 1), self.kernel_shape, self.dilations)
+        filter_size = list(map(lambda k, d: k + (k - 1) * (d - 1), self.kernel_shape, self.dilations))
 
         for xdim in range(2, self.x.rank):
             dim = xdim - 2
@@ -364,6 +358,8 @@ class SpatialFilter(Node):
                 outdim = last_out // self.strides[dim] + 1
 
             res.append(outdim)
+
+        return res
 
     def print_header_info_comment(self, destination: TextIO):
         def lstr(l: List):
@@ -527,7 +523,7 @@ class Pooling(SpatialFilter):
         count_include_pad = self.count_include_pad
         storage_order = self.storage_order
 
-        res = x.shape[:2]
+        res = list(x.shape[:2])
 
         data_dims = x.rank - 2
         pad_shapes = [pads[i] + pads[i + data_dims] for i in range(data_dims)]
@@ -1068,7 +1064,7 @@ class Slice(Node):
 
         else:
 
-            for i, d in enumerate(ax):
+            for i, d in enumerate(self.ax):
                 if d < 0:
                     d = data.rank + d
 
@@ -1084,7 +1080,7 @@ class Slice(Node):
         for d in range(data.rank):
             s = sta[d]
             e = en[d]
-            s = stp[d]
+            st = stp[d]
             in_size = data.shape[d]
 
             if s < 0: s = in_size + s
@@ -1455,7 +1451,7 @@ class Concat(Node):
             self.axis += len(inputs[0].data.shape)
             logging.debug(f"New axis is {self.axis}")
 
-        new_shape = inputs[0].data.shape
+        new_shape = inputs[0].shape
         output_axis_size = 0
 
         for node_input in inputs:
@@ -1583,7 +1579,7 @@ class Reshape(Node):
                 output_size *= s
 
         if negative_shape_found:
-            missing_dim = data.data_num_elem / output_size
+            missing_dim = data.data_num_elem // output_size
 
             if output_size * missing_dim != data.data_num_elem:
                 raise ValueError("Could not deduce implicit dimension size for Resize node")
@@ -1660,6 +1656,7 @@ def from_onnx_node(onnx_node: onnx.NodeProto) -> Node:
         "Conv": Conv,
         "Div": Elementwise_2,
         "Equal": Elementwise_2,
+        "Gemm": ...,
         "GlobalAveragePool": GlobalAveragePool,
         "Greater": Elementwise_2,
         "GreaterOrEqual": Elementwise_2,
@@ -1680,5 +1677,6 @@ def from_onnx_node(onnx_node: onnx.NodeProto) -> Node:
     }
 
     n = mapping[onnx_node.op_type](onnx_node)
+    n.parse_attributes()
 
     return n

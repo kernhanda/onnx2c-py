@@ -53,7 +53,7 @@ def parse_attribute_strings(a: onnx.AttributeProto) -> str:
     return a.strings
 
 
-def parse_attribute_tensor(a: onnx.AttributeProto) -> tensor.Tensor:
+def parse_attribute_tensor(a: onnx.AttributeProto) -> "tensor.Tensor":
     if a.type != a.AttributeType.TENSOR:
         raise ValueError("Not a tensor attribute")
 
@@ -63,7 +63,7 @@ def parse_attribute_tensor(a: onnx.AttributeProto) -> tensor.Tensor:
     return tensor.parse_onnx_tensor(a.t)
 
 
-def cast_to_ndim_arrayptr(t: tensor.Tensor, shortname: str) -> str:
+def cast_to_ndim_arrayptr(t: "tensor.Tensor", shortname: str) -> str:
     idxstr = "".join([f"[{d}]" for d in t.data.shape[1:]])
 
     # float (*X)[1][2]
@@ -77,7 +77,7 @@ def cast_to_ndim_arrayptr(t: tensor.Tensor, shortname: str) -> str:
     return res
 
 
-def is_splatted(t: tensor.Tensor, v) -> bool:
+def is_splatted(t: "tensor.Tensor", v) -> bool:
     if not t.isConst: return False
 
     return np.all(t.data == v)

@@ -61,22 +61,22 @@ class Tensor:
 
     @property
     def shape(self) -> List[int]:
-        return self.data.shape
+        return list(self.data.shape)
 
     @property
     def data_type_str(self):
         return {
-            np.bool: "bool",
-            np.float32: "float",
-            np.double: "double",
-            np.int8: "int8_t",
-            np.uint8: "uint8_t",
-            np.int16: "int16_t",
-            np.uint16: "uint16_t",
-            np.int32: "int32_t",
-            np.uint32: "uint32_t",
-            np.int64: "int64_t",
-            np.uint64: "uint64_t",
+            np.dtype("bool"): "bool",
+            np.dtype("float32"): "float",
+            np.dtype("double"): "double",
+            np.dtype("int8"): "int8_t",
+            np.dtype("uint8"): "uint8_t",
+            np.dtype("int16"): "int16_t",
+            np.dtype("uint16"): "uint16_t",
+            np.dtype("int32"): "int32_t",
+            np.dtype("uint32"): "uint32_t",
+            np.dtype("int64"): "int64_t",
+            np.dtype("uint64"): "uint64_t",
         }[self.data.dtype]
 
     @property
@@ -109,7 +109,7 @@ class Tensor:
 
     @property
     def is_any_int(self) -> bool:
-        return self.is_unsigned_int() or self.is_signed_int()
+        return self.is_unsigned_int or self.is_signed_int
 
     @property
     def is_unsigned_int(self) -> bool:
@@ -217,7 +217,7 @@ def parse_onnx_tensor(t: onnx.TensorProto):
 
     if t.data_location != T.DataLocation.DEFAULT:
         raise RuntimeError(f"unhandled: non-default data location in tensor {t.name}")
-    if t.segment:
+    if t.segment and t.segment.begin != 0 and t.segment.end != 0:
         raise RuntimeError(f"unhandled: segmented data in tensor {t.name}")
     if t.data_type == T.UNDEFINED:
         raise RuntimeError(f"unknown data type in tensor {t.name}")
