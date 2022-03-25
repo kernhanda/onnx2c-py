@@ -29,7 +29,7 @@ def main():
 
     g = graph.Graph(onnx.load(args["input"]))
 
-    with open(args["output"], mode="wt") as f:
+    with open(args["output"], mode="wt", buffering=1) as f:
         g.print_source(f)
 
 

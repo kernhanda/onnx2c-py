@@ -6,7 +6,6 @@ from math import ceil, floor, fmod
 from typing import TextIO, List, Tuple
 
 import onnx
-from sympy import det
 
 import tensor
 import utils
@@ -218,14 +217,14 @@ class Elementwise_2(Node):
 
         # if either A or B does not have enough dimensions, prepend
         # dimensions of 1 to match rank of C
-        pad_A = [0] * (C.rank - A.rank) + A.shape
-        pad_B = [0] * (C.rank - B.rank) + B.shape
+        pad_A = [0] * (C.rank - (A.rank or A.size)) + (A.shape or [A.size])
+        pad_B = [0] * (C.rank - (B.rank or B.size)) + (B.shape or [B.size])
 
         # print out the loops over all C dimensions.
         # at the same time, create the indexing strings into A and B
-        Aidx = A.cname
-        Bidx = B.cname
-        Cidx = C.cname
+        Aidx = "A"
+        Bidx = "B"
+        Cidx = "C"
         for r in range(C.rank):
             lv = f"i{r}"
 
@@ -305,7 +304,7 @@ class SpatialFilter(Node):
 
     def resolve_kernel_shape(self):
         if not self.kernel_shape:
-            self.kernel_shape = self.w.data.shape[2:]
+            self.kernel_shape = self.w.shape[2:]
 
     def resolve_dilations(self):
         if not self.dilations:
@@ -327,8 +326,8 @@ class SpatialFilter(Node):
     def resolve_output_size(self) -> List[int]:
         num_data_dim = self.x.rank - 2
         res: List[int] = [
-            self.x.data.shape[0],    # batch size
-            self.w.data.shape[0],    # number of feature maps
+            self.x.shape[0],    # batch size
+            self.w.shape[0],    # number of feature maps
         ]
 
         # From onnx2c
@@ -446,43 +445,43 @@ class SpatialFilter(Node):
                 f"++{o_idx}, {i_idx} += {strides[i]}) {{\n"
             )
 
-            self.print_output_cell_init(destination=destination, y_idx=y_idx)
+        self.print_output_cell_init(destination=destination, y_idx=y_idx)
 
-            if w and group == 1:
-                destination.write(f"\t\t\tfor (int32_t c = 0; c < {channels}; ++c) {{\n")
+        if w and group == 1:
+            destination.write(f"\t\t\tfor (int32_t c = 0; c < {channels}; ++c) {{\n")
 
-            elif w and group > 1:
-                destination.write(f"\t\t\tfor (int32_t c = gi * g; c < gi * (g + 1); ++c) {{\n")
+        elif w and group > 1:
+            destination.write(f"\t\t\tfor (int32_t c = gi * g; c < gi * (g + 1); ++c) {{\n")
 
-            # loop over channels and kernel
-            for i in range(n_data_dims):
-                idx = f"k{i}"
-                destination.write(f"\t\t\tfor (uint32_t {idx} = 0; {idx} < {kernel_shape[i]}; ++{idx}) {{\n")
+        # loop over channels and kernel
+        for i in range(n_data_dims):
+            idx = f"k{i}"
+            destination.write(f"\t\t\tfor (uint32_t {idx} = 0; {idx} < {kernel_shape[i]}; ++{idx}) {{\n")
 
-            for i in range(n_data_dims):
-                destination.write(
-                    f"\t\t\t\tint ii{i} = i{i} + k{i} * {dilations[i]};\n"
-                    f"\t\t\t\tif (ii{i} < 0) continue;\n"
-                    f"\t\t\t\tif (ii{i} >= {x.shape[2 + i]}) continue;\n"
-                )
+        for i in range(n_data_dims):
+            destination.write(
+                f"\t\t\t\tint ii{i} = i{i} + k{i} * {dilations[i]};\n"
+                f"\t\t\t\tif (ii{i} < 0) continue;\n"
+                f"\t\t\t\tif (ii{i} >= {x.shape[2 + i]}) continue;\n"
+            )
 
-            self.print_output_cell_calc(destination=destination, x_idx=in_kern_idxs, w_idx="", y_idx=y_idx)
+        self.print_output_cell_calc(destination=destination, x_idx=in_kern_idxs, w_idx="", y_idx=y_idx)
 
-            destination.write("\t\t\t}} /* k */\n" * n_data_dims)
+        destination.write("\t\t\t} /* k */\n" * n_data_dims)
 
-            if w:
-                destination.write("\t\t\t}} /* c */\n")
+        if w:
+            destination.write("\t\t\t} /* c */\n")
 
-            self.print_output_cell_finalize(destination=destination, y_idx=y_idx)
+        self.print_output_cell_finalize(destination=destination, y_idx=y_idx)
 
-            destination.write("\t\t}} /* o */\n" * n_data_dims)
+        destination.write("\t\t} /* o */\n" * n_data_dims)
 
-            destination.write("\t}} /* m or c, depending on this node's operator */\n")
+        destination.write("\t} /* m or c, depending on this node's operator */\n")
 
-            if w and group > 1:
-                destination.write("\t}} /* g */\n")
+        if w and group > 1:
+            destination.write("\t} /* g */\n")
 
-            destination.write("\t}} /* b */\n")
+        destination.write("\t} /* b */\n")
 
 
 class Pooling(SpatialFilter):
@@ -805,13 +804,13 @@ class GlobalAveragePool(Node):
         )
 
         dim_num_elem = 1    # number of elements averaged over
-        in_idx_str = x.cname + "[b][c]"    # start of the input element access string
-        out_idx_str = y.cname + "[b][c]"    # start of the output element access string
+        in_idx_str = "x" + "[b][c]"    # start of the input element access string
+        out_idx_str = "y" + "[b][c]"    # start of the output element access string
 
-        for idx, dim in enumerate(x.shape, 2):
-            dim_num_elem *= dim
+        for dim, dim_size in enumerate(x.shape[2:], 2):
+            dim_num_elem *= dim_size
 
-            dim_var = f"d{idx - 2}"
+            dim_var = f"d{dim - 2}"
             in_idx_str += f"[{dim_var}]"
             out_idx_str += "[0]"
 
@@ -1026,18 +1025,18 @@ class Slice(Node):
 
         else:
             if self.onnx_ir_version > 9:
-                expected_size = axes.data_num_elem
+                expected_size = axes.size
 
             else:
                 expected_size = len(ax)
 
-        if starts and starts.data_num_elem != expected_size:
+        if starts and starts.size != expected_size:
             raise ValueError("Input 'starts' does not have correct amount of elements")
 
-        if ends and ends.data_num_elem != expected_size:
+        if ends and ends.size != expected_size:
             raise ValueError("Input 'ends' does not have correct amount of elements")
 
-        if steps and steps.data_num_elem != expected_size:
+        if steps and steps.size != expected_size:
             raise ValueError("Input 'steps' does not have correct amount of elements")
 
         # Default values are in place. Override with given values
@@ -1187,9 +1186,9 @@ class Conv(SpatialFilter):
         for i in range(self.x.rank - 2):
             outidx += f"[o{i}]"
 
-        destination.write(f"\t\t\t{self.y.cname}[b][m]{outidx} = ")
+        destination.write(f"\t\t\tY[b][m]{outidx} = ")
         if self.b:
-            destination.write(f"{self.b.cname}[m];\n")
+            destination.write(f"B[m];\n")
         else:
             destination.write("0;\n")
 
@@ -1204,8 +1203,8 @@ class Conv(SpatialFilter):
             kidx += f"[k{i}]"
 
         destination.write(
-            f"\t\t\t\t{self.y.cname}[b][m]{outidx} += {self.x.cname}[b][c]{iididx} *"
-            f"{self.w.cname}[m][c{'' if self.group == 1 else '-(gi*g)'}]{kidx};\n"
+            f"\t\t\t\tY[b][m]{outidx} += X[b][c]{iididx} * "
+            f"W[m][c{'' if self.group == 1 else '-(gi*g)'}]{kidx};\n"
         )
 
     def print_output_cell_finalize(self, destination: TextIO, y_idx: str = ""):
@@ -1238,11 +1237,11 @@ class Conv(SpatialFilter):
         res = tensor.Tensor(data=np.ndarray(shape=res_shape, dtype=self.x.data.dtype))
         self.y = res
 
-        self._register_input(self.x, "x")
-        self._register_input(self.w, "w")
+        self._register_input(self.x, "X")
+        self._register_input(self.w, "W")
         if self.b:
-            self._register_input(self.b, "b")
-        self._register_output(self.y, "y")
+            self._register_input(self.b, "B")
+        self._register_output(self.y, "Y")
 
         return [self.y]
 
@@ -1289,15 +1288,15 @@ class BatchNormalization(Node):
                 raise ValueError(f"Unimplemented parsing of attribute {a.name}")
 
     def print(self, destination: TextIO):
-        batch_size, num_chan = self.input.data.shape[:2]
+        batch_size, num_chan = self.input.shape[:2]
         dtype = self.input.data_type_str
 
-        input_name = self.input.cname
-        mean_name = self.mean.cname
-        var_name = self.var.cname
-        out_name = self.output.cname
-        scale_name = self.scale.cname if self.scale else None
-        bias_name = self.bias.cname if self.bias else None
+        input_name = "input"
+        mean_name = "mean"
+        var_name = "var"
+        out_name = "output"
+        scale_name = "scale" if self.scale else None
+        bias_name = "bias" if self.bias else None
 
         destination.write(
             f"\t/* BatchNormalization\n"
@@ -1308,9 +1307,9 @@ class BatchNormalization(Node):
             f"\tfor (uint64_t c = 0; c < {num_chan}; ++c) {{\n"
         )
 
-        idxs = "[b][c]" + ''.join([f"[i{i}]" for i in range(2, len(self.input.data.shape))])
+        idxs = "[b][c]" + ''.join([f"[i{i}]" for i in range(2, self.input.rank)])
 
-        for i, d in enumerate(self.input.data.shape, 2):
+        for i, d in enumerate(self.input.shape[2:], 2):
             idx = f"i{i}"
             destination.write(f"\tfor (uint64_t {idx} = 0; {idx} < {d}; ++{idx}) {{\n")
 
@@ -1330,7 +1329,7 @@ class BatchNormalization(Node):
             destination.write(f" + {bias_name}[c]")
 
         destination.write(";\n")
-        destination.write("\t}\n" * len(self.input.shape))
+        destination.write("\t}\n" * self.input.rank)
 
     def resolve_node(self, inputs: List[tensor.Tensor]) -> List[tensor.Tensor]:
         if len(inputs) != 5:
@@ -1353,7 +1352,7 @@ class BatchNormalization(Node):
             self._calc_sqrt_var_offline()
             self.sqrt_var_offline = True
 
-        self.output = tensor.Tensor(data=np.ndarray(shape=self.input.data.shape, dtype=self.input.data.dtype))
+        self.output = tensor.Tensor(data=np.ndarray(shape=self.input.shape, dtype=self.input.data.dtype))
 
         self._register_input(self.input, "input")
         self._register_input(self.mean, "mean")
@@ -1407,7 +1406,7 @@ class Concat(Node):
 
         res_name = self.concat_result.cname
         dtype = self.concat_result.data_type_str
-        res_shape: List[int] = self.concat_result.data.shape
+        res_shape: List[int] = self.concat_result.shape
         axis = self.axis
 
         # The axis_pitch is the number of elements to add to move to the next split axis in the concat_result
@@ -1422,9 +1421,9 @@ class Concat(Node):
 
             # the input_axis_pitch is the number of elements to add to move to the next split axis in the inputs
             input_name = node_input.cname
-            input_shape: List[int] = node_input.data.shape
+            input_shape: List[int] = node_input.shape
             input_axis_pitch = reduce(lambda x, y: x * y, input_shape[axis:])
-            input_size = node_input.data_num_elem
+            input_size = node_input.size
 
             # copy the data across: for every 'input_axis_pitch' values copied, we move over by the 'axis_pitch'
             destination.write(
@@ -1448,7 +1447,7 @@ class Concat(Node):
 
         if self.axis < 0:
             logging.debug(f"Got negative axis ({self.axis}) to concat node")
-            self.axis += len(inputs[0].data.shape)
+            self.axis += len(inputs[0].shape)
             logging.debug(f"New axis is {self.axis}")
 
         new_shape = inputs[0].shape
@@ -1456,13 +1455,13 @@ class Concat(Node):
 
         for node_input in inputs:
             for idx, d in enumerate(new_shape):
-                if d != node_input.data.shape[idx] and idx != self.axis:
+                if d != node_input.shape[idx] and idx != self.axis:
                     raise ValueError(
                         "Concat's input tensors must have the same shape, "
                         "except for the dimension size of the axis to concatenate on"
                     )
 
-            output_axis_size += node_input.data.shape[self.axis]
+            output_axis_size += node_input.shape[self.axis]
 
         new_shape[self.axis] = output_axis_size
         self.concat_result = tensor.Tensor(data=np.ndarray(shape=new_shape, dtype=inputs[0].data.dtype))
@@ -1536,10 +1535,10 @@ class Reshape(Node):
 
         destination.write(
             "\t/* Reshape */\n"
-            f"\t{dtype} *data = ({dtype}*){self.data.cname};\n"
-            f"\t{dtype} *reshaped = ({dtype}*){self.reshaped.cname};\n"
-            f"\tfor(uint64_t i = 0; i < {self.data.data_num_elem}; ++i)\n"
-            "\t\treshaped[i] = data[i];\n\n"
+            f"\t{dtype} *data_ = ({dtype}*){self.data.cname};\n"
+            f"\t{dtype} *reshaped_ = ({dtype}*){self.reshaped.cname};\n"
+            f"\tfor(uint64_t i = 0; i < {self.data.size}; ++i)\n"
+            "\t\treshaped_[i] = data_[i];\n\n"
         )
 
     def resolve_node(self, inputs: List[tensor.Tensor]) -> List[tensor.Tensor]:
@@ -1568,10 +1567,10 @@ class Reshape(Node):
                 negative_shape_idx = i
 
             elif s == 0:
-                if i >= len(data.data.shape):
+                if i >= len(data.shape):
                     raise ValueError("Bad input: Reshape requesting duplication of input dimension that doesn't exist")
 
-                s = data.data.shape[i]
+                s = data.shape[i]
 
             out_shape.append(s)
 
@@ -1579,9 +1578,9 @@ class Reshape(Node):
                 output_size *= s
 
         if negative_shape_found:
-            missing_dim = data.data_num_elem // output_size
+            missing_dim = data.size // output_size
 
-            if output_size * missing_dim != data.data_num_elem:
+            if output_size * missing_dim != data.size:
                 raise ValueError("Could not deduce implicit dimension size for Resize node")
 
             out_shape[negative_shape_idx] = missing_dim
@@ -1619,10 +1618,10 @@ class Relu(Node):
 
         destination.write(
             "\t/* Relu */\n"
-            f"\t{dtype} *X = ({dtype}*){X.cname};\n"
-            f"\t{dtype} *Y = ({dtype}*){Y.cname};\n"
-            f"\tfor(uint64_t i = 0; i < {X.data_num_elem}; ++i)\n"
-            "\t\tY[i] = X[i] > 0 ? X[i] : 0;\n\n"
+            f"\t{dtype} *X_ = ({dtype}*){X.cname};\n"
+            f"\t{dtype} *Y_ = ({dtype}*){Y.cname};\n"
+            f"\tfor(uint64_t i = 0; i < {X.size}; ++i)\n"
+            "\t\tY_[i] = X_[i] > 0 ? X_[i] : 0;\n\n"
         )
 
     def resolve_node(self, inputs: List[tensor.Tensor]) -> List[tensor.Tensor]:
@@ -1631,10 +1630,10 @@ class Relu(Node):
         if not (X.is_all_fp or X.is_signed_int):
             raise ValueError("Incorrect input for Relu")
 
-        if X.data.shape[1] != 0 and not (X.data.shape[0] != 1 or X.data.shape[1] != 1):
+        if X.shape[1] != 0 and not (X.shape[0] != 1 or X.shape[1] != 1):
             raise ValueError("Unsupported: multidim relu")
 
-        Y = tensor.Tensor(data=np.ndarray(shape=X.data.shape, dtype=X.data.dtype))
+        Y = tensor.Tensor(data=np.ndarray(shape=X.shape, dtype=X.data.dtype))
 
         self.X = X
         self.Y = Y
@@ -1714,11 +1713,11 @@ class Gemm(Node):
             f"\tconst int N = {N};\n"
             f"\tfloat alpha = {alpha};\n"
             f"\tfloat beta = {beta};\n"
-            f"\t{dtype} (*A)[{A1}] = ({dtype}(*)[{A1}]){A.cname};"
-            f"\t{dtype} (*Y)[{N}] = ({dtype}(*)[{N}]){Y.cname};"
+            f"\t{dtype} (*A_)[{A1}] = ({dtype}(*)[{A1}]){A.cname};\n"
+            f"\t{dtype} (*Y_)[{N}] = ({dtype}(*)[{N}]){Y.cname};\n"
         )
 
-        A_el = "A[i][r]" if transA else "A[r][i]"
+        A_el = "A_[i][r]" if transA else "A_[r][i]"
         B_idx = "[c][i]" if transB else "[i][c]"
 
         # Cast optional C matrix to generated variable
@@ -1748,28 +1747,28 @@ class Gemm(Node):
             C_idx += "[0]" if C0 <= 1 else "[r]"
             C_idx += "[0]" if C1 <= 1 else "[c]"
 
-            destination.write(f"\t{dtype} (*C)[{C1}] = ({dtype}(*)[{C1}]){C.cname};\n")
+            destination.write(f"\t{dtype} (*C_)[{C1}] = ({dtype}(*)[{C1}]){C.cname};\n")
 
         # Now generate the calculation source code
 
         # Loop output rows, columns
         destination.write(
-            "\tfor (uint32_t r = 0; r < M; ++r) {\n"
+            "\tfor (uint32_t r = 0; r < M; ++r)\n"
             "\t\tfor (uint32_t c = 0; c < N; ++c) {\n"
 
         # Calculate the matrix multiplcation inner dot product
             f"\t\t\t{dtype} ABrc = 0;\n"
             "\t\t\tfor (uint32_t i = 0; i < K; ++i) {\n"
-            f"\t\t\t\t{B.data_type_str} B = {B.cname}{B_idx};\n"
-            f"\t\t\t\tABrc += {A_el} * B;\n"
-            "\t\t\t}"
+            f"\t\t\t\t{B.data_type_str} B_ = {B.cname}{B_idx};\n"
+            f"\t\t\t\tABrc += {A_el} * B_;\n"
+            "\t\t\t}\n"
 
         # Add scale & bias, store result in output
             f"\t\t\t{dtype} tmp = ABrc * alpha;\n"
         )
 
         if C:
-            destination.write(f"\t\t\ttmp += C{C_idx} * beta;\n")
+            destination.write(f"\t\t\ttmp += C_{C_idx} * beta;\n")
 
         destination.write("\t\t\tY[r][c] = tmp;\n\t}\n")
 

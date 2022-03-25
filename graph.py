@@ -6,9 +6,11 @@ from typing import List, TextIO
 
 import node
 import tensor
+import utils
 
 
 class Graph:
+
     def __init__(self, onnx_model: onnx.ModelProto, ext_inputs=[]) -> None:
         self.onnx_model = onnx_model
         self.ext_inputs = ext_inputs
@@ -52,13 +54,15 @@ class Graph:
 
     def print_global_tensors(self, destination: TextIO):
         for t in self.tensors:
-            if not t.data.shape:
+            if t.data is None:
                 raise RuntimeError("Trying to print a tensor with no dimensions")
 
-            if not t.generate: continue
-            if t.isIO: continue
+            if not t.generate:
+                continue
+            if t.isIO:
+                continue
 
-            if len(t.data.shape) == 1 and t.data.shape[0] == 0:
+            if len(t.shape) == 1 and t.shape[0] == 0:
                 logging.warn(f"Tensor {t.name} has size of 0. Skipping it")
                 continue
 
@@ -91,7 +95,7 @@ class Graph:
 
     def print_interface_function(self, destination: TextIO, interface_name: str = None):
         is_first = True
-        interface_name = interface_name or self.onnx_model.graph.name
+        interface_name = interface_name or ("model" + utils.cify_name(self.onnx_model.graph.name))
 
         destination.write(f"void {interface_name}(")
 
@@ -126,7 +130,7 @@ class Graph:
         for n in self.nodes:
             destination.write(f"\t{n.c_name}( ")
             n.print_func_params_callsite(destination)
-            destination.write(f");")
+            destination.write(f");\n\n")
 
         destination.write("}\n")
 

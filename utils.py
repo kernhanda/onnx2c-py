@@ -7,7 +7,7 @@ import tensor
 
 
 def cify_name(name: str) -> str:
-    forbidden = string.punctuation + string.whitespace
+    forbidden = string.punctuation + string.whitespace + '-+/*'
     return name.translate(str.maketrans(forbidden, '_' * len(forbidden)))
 
 
@@ -64,7 +64,7 @@ def parse_attribute_tensor(a: onnx.AttributeProto) -> "tensor.Tensor":
 
 
 def cast_to_ndim_arrayptr(t: "tensor.Tensor", shortname: str) -> str:
-    idxstr = "".join([f"[{d}]" for d in t.data.shape[1:]])
+    idxstr = "".join([f"[{d}]" for d in t.shape[1:]])
 
     # float (*X)[1][2]
     lhs = f"{t.data_type_str}(*{shortname}){idxstr}"

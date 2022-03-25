@@ -8,6 +8,7 @@ import utils
 
 
 class Tensor:
+
     def __init__(
         self,
         name: str = "",
@@ -45,23 +46,23 @@ class Tensor:
 
     @property
     def cname(self):
-        return utils.cify_name(self.name)
+        return "tensor_" + utils.cify_name(self.name)
 
     @property
     def data_elem_size(self) -> int:
         return self.data.itemsize
 
     @property
-    def data_num_elem(self) -> int:
-        return self.data.size
-
-    @property
     def rank(self):
-        return len(self.data.shape)
+        return len(self.shape)
 
     @property
     def shape(self) -> List[int]:
         return list(self.data.shape)
+
+    @property
+    def size(self) -> int:
+        return self.data.size
 
     @property
     def data_type_str(self):
@@ -81,7 +82,7 @@ class Tensor:
 
     @property
     def str_dimensions(self):
-        return ' '.join(map(str, self.data.shape))
+        return ' '.join(map(str, self.shape))
 
     @property
     def is_high_precision_numeric(self) -> bool:
@@ -134,7 +135,7 @@ class Tensor:
         return bool(self.name)
 
     def print_element(self, destination: TextIO, element: int):
-        destination.write(str(self.data[element]))
+        destination.write(str(self.data.ravel()[element]))
         if self.is_all_fp:
             destination.write("f")
 
@@ -150,39 +151,47 @@ class Tensor:
             I.e. if calling with dim=0, offs=0 (which are default values),
             it prints the entire variable initialzation.
         """
-        if self.data.shape[dim] == 0:
-            return
 
-        destination.write("  " * dim)
-        destination.write("{")
-
-        if dim < (len(self.data.shape) - 1):
-            destination.write("\n")
-
-            for i in range(self.data.shape[dim]):
-                remaining_dims = 1
-
-                for j in self.data.shape[dim + 1:]:
-                    remaining_dims *= j
-
-                self._print_tensor_initializer(destination, dim + 1, offs + i * remaining_dims)
-
-                if i < (self.data.shape[dim] - 1):
-                    destination.write(",")
-
-                destination.write("\n")
+        if not self.shape:
+            if self.size != 1:
+                raise ValueError("Unexpected data with multiple elements and no shape")
+            else:
+                destination.write(" {")
+                self.print_element(destination=destination, element=0)
+        else:
+            if self.shape[dim] == 0:
+                return
 
             destination.write("  " * dim)
+            destination.write("{")
 
-        else:
-            for i in range(self.data.shape[dim]):
-                element = offs + i
+            if dim < (self.rank - 1):
+                destination.write("\n")
 
-                # TODO: It might be preferable to inline this function
-                self.print_element(destination, element)
+                for i in range(self.shape[dim]):
+                    remaining_dims = 1
 
-                if i < (self.data.shape[dim] - 1):
-                    destination.write(", ")
+                    for j in self.shape[dim + 1:]:
+                        remaining_dims *= j
+
+                    self._print_tensor_initializer(destination, dim + 1, offs + i * remaining_dims)
+
+                    if i < (self.shape[dim] - 1):
+                        destination.write(",")
+
+                    destination.write("\n")
+
+                destination.write("  " * dim)
+
+            else:
+                for i in range(self.shape[dim]):
+                    element = offs + i
+
+                    # TODO: It might be preferable to inline this function
+                    self.print_element(destination, element)
+
+                    if i < (self.shape[dim] - 1):
+                        destination.write(", ")
 
         destination.write("}")
 
@@ -198,7 +207,10 @@ class Tensor:
         res += alternate_name or self.cname
 
         if not callsite:
-            res += ''.join([f"[{i}]" for i in self.data.shape])
+            if self.rank:
+                res += ''.join([f"[{i}]" for i in self.shape])
+            else:
+                res += f'[{self.size}]'
 
         if destination:
             destination.write(res)
