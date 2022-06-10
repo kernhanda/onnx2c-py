@@ -1454,6 +1454,10 @@ class Concat(Node):
         output_axis_size = 0
 
         for node_input in inputs:
+            
+            if inputs[0].rank != node_input.rank:
+                raise ValueError("Concat expects all inputs to have equal number of dimensions")
+
             for idx, d in enumerate(new_shape):
                 if d != node_input.shape[idx] and idx != self.axis:
                     raise ValueError(
