@@ -202,7 +202,7 @@ class Graph:
             num_unresolved = len(nodes)
 
     def try_resolve_node(self, onnx_node: onnx.NodeProto) -> bool:
-        logging.info(f"Resolving node {onnx_node.name}")
+        logging.info(f"Resolving ONNX node {onnx_node.name}")
 
         for n in self.nodes:
             if onnx_node.name == n.onnx_name:
@@ -233,11 +233,21 @@ class Graph:
         n.is_resolved = True
         self.nodes.append(n)
 
+                
         logging.info(f"Adding {n.op_name} node: {n.onnx_name}")
-        logging.info("\tinputs:")
-        logging.info(f"\t{' | '.join([i.name for i in inputs])}")
-        logging.info("\toutputs:")
-        logging.info(f"\t{' | '.join([o.name for o in outputs])}")
+
+        if logging.getLevelName() == "DEBUG":
+            debug_str = "inputs:\n\t"
+            for i in inputs:
+                input_debug_str = f"{i.name} - {i.data_type_str} {{ {str(i.rank)} }} (Name in C sources: {i.cname})\n\t"
+                debug_str += input_debug_str
+
+            debug_str += "outputs:\n\t"
+            for o in outputs:
+                output_debug_str = f"{o.name} - {o.data_type_str} {{ {str(o.rank)} }} (Name in C sources: {o.cname})\n\t"
+                debug_str += output_debug_str
+
+            logging.debug(debug_str)
 
         return True
 
