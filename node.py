@@ -1622,8 +1622,8 @@ class Relu(Node):
 
         destination.write(
             "\t/* Relu */\n"
-            f"\t{dtype} *X_ = ({dtype}*){X.cname};\n"
-            f"\t{dtype} *Y_ = ({dtype}*){Y.cname};\n"
+            f"\t{dtype} *X_ = ({dtype}*)X;\n"
+            f"\t{dtype} *Y_ = ({dtype}*)Y;\n"
             f"\tfor(uint64_t i = 0; i < {X.size}; ++i)\n"
             "\t\tY_[i] = X_[i] > 0 ? X_[i] : 0;\n\n"
         )
