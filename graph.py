@@ -233,7 +233,6 @@ class Graph:
         n.is_resolved = True
         self.nodes.append(n)
 
-                
         logging.info(f"Adding {n.op_name} node: {n.onnx_name}")
 
         if logging.getLevelName() == "DEBUG":
