@@ -345,9 +345,6 @@ class Graph:
 
     @property
     def onnx_ir_version(self):
-        if len(self.onnx_model.opset_import) > 1:
-            raise RuntimeError("Unsupported: Model has multiple opset versions")
-
         return self.onnx_model.opset_import[0].version
 
     def find_tensor(self, name: str):
